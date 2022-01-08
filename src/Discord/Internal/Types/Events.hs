@@ -15,9 +15,10 @@ import qualified Data.Text as T
 
 import Discord.Internal.Types.Prelude
 import Discord.Internal.Types.Channel
-import Discord.Internal.Types.Guild
-import Discord.Internal.Types.User (User)
-import Discord.Internal.Types.Interactions (Interaction)
+import Discord.Internal.Types.Guild     ( Role, GuildInfo, GuildUnavailable, Guild )
+import Discord.Internal.Types.User (User, GuildMember)
+import Discord.Internal.Types.Interactions (InternalInteraction, Interaction)
+import Discord.Internal.Types.Components (Emoji)
 
 
 -- | Represents possible events sent by discord. Detailed information can be found at https://discord.com/developers/docs/topics/gateway.
@@ -91,16 +92,16 @@ data EventInternalParse =
   | InternalPresenceUpdate          PresenceInfo
   | InternalTypingStart             TypingInfo
   | InternalUserUpdate              User
-  | InternalInteractionCreate       Interaction
+  | InternalInteractionCreate       InternalInteraction
   -- | InternalVoiceStateUpdate
   -- | InternalVoiceServerUpdate
   | InternalUnknownEvent     T.Text Object
   deriving (Show, Read, Eq)
 
-data PartialApplication = PartialApplication {
-  partialApplicationID :: ApplicationId
+data PartialApplication = PartialApplication
+  { partialApplicationID :: ApplicationId
   , partialApplicationFlags :: Int
-} deriving (Show, Eq, Read)
+  } deriving (Show, Eq, Read)
 
 instance FromJSON PartialApplication where
   parseJSON = withObject "PartialApplication" (\v -> PartialApplication <$> v .: "id" <*> v .: "flags")

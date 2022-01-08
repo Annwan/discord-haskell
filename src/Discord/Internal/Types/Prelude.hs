@@ -1,5 +1,8 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE MultiParamTypeClasses  #-}
+{-# LANGUAGE FlexibleInstances  #-}
 
 -- | Provides base types and utility functions needed for modules in Discord.Internal.Types
 module Discord.Internal.Types.Prelude where
@@ -15,6 +18,8 @@ import Control.Monad (mzero)
 
 import Data.Functor.Compose (Compose(Compose, getCompose))
 import Data.Bifunctor (first)
+import Data.Data (Data (dataTypeOf), dataTypeConstrs, fromConstr)
+import Data.Maybe (fromJust)
 
 -- | Authorization token for the Discord API
 data Auth = Auth T.Text
@@ -50,6 +55,7 @@ type GuildId = Snowflake
 type MessageId = Snowflake
 type AttachmentId = Snowflake
 type EmojiId = Snowflake
+type StickerId = Snowflake
 type UserId = Snowflake
 type OverwriteId = Snowflake
 type RoleId = Snowflake
@@ -59,6 +65,7 @@ type ParentId = Snowflake
 type ApplicationId = Snowflake 
 type ApplicationCommandId = Snowflake
 type InteractionId = Snowflake
+type InteractionToken = T.Text
 type Shard = (Int, Int)
 
 -- | Gets a creation date from a snowflake.
@@ -71,3 +78,41 @@ epochTime :: UTCTime
 epochTime = posixSecondsToUTCTime 0
 
 type ColorInteger = Integer
+
+makeTable :: (Data t, Enum t) => t -> [(Int, t)]
+makeTable t = map (\cData -> let c = fromConstr cData in (fromEnum c, c)) (dataTypeConstrs $ dataTypeOf t)
+
+toMaybeJSON :: (ToJSON a) => a -> Maybe Value
+toMaybeJSON = return . toJSON
+
+-- | What type of interaction has a user requested? Each requires its own type
+-- of response.
+data InteractionType
+  = InteractionTypePing
+  | InteractionTypeApplicationCommand
+  | InteractionTypeMessageComponent
+  | InteractionTypeApplicationCommandAutocomplete
+  deriving (Show, Read, Data, Eq, Ord)
+
+instance Enum InteractionType where
+  fromEnum InteractionTypePing = 1
+  fromEnum InteractionTypeApplicationCommand = 2
+  fromEnum InteractionTypeMessageComponent = 3
+  fromEnum InteractionTypeApplicationCommandAutocomplete = 4
+  toEnum a = fromJust $ lookup a table
+    where
+      table = makeTable InteractionTypePing
+
+instance ToJSON InteractionType where
+  toJSON = toJSON . fromEnum
+
+instance FromJSON InteractionType where
+  parseJSON = withScientific "InteractionType" (return . toEnum . round)
+
+class Internals a b where
+  toInternal :: a -> b
+  fromInternal :: b -> Maybe a
+
+instance Internals a a where
+  toInternal = id
+  fromInternal = Just

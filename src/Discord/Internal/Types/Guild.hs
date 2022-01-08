@@ -10,55 +10,28 @@ import Data.Aeson
 import qualified Data.Text as T
 
 import Discord.Internal.Types.Prelude
-import Discord.Internal.Types.Channel (Channel, Emoji)
-import Discord.Internal.Types.User (User)
-
--- | Representation of a guild member.
-data GuildMember = GuildMember
-      { memberUser     :: Maybe User
-      , memberNick     :: Maybe T.Text
-      , memberRoles    :: [RoleId]
-      , memberJoinedAt :: UTCTime
-      , memberDeaf     :: Bool
-      , memberMute     :: Bool
-      } deriving (Show, Read, Eq, Ord)
-
-instance FromJSON GuildMember where
-  parseJSON = withObject "GuildMember" $ \o ->
-    GuildMember <$> o .:? "user"
-                <*> o .:? "nick"
-                <*> o .:  "roles"
-                <*> o .:  "joined_at"
-                <*> o .:  "deaf"
-                <*> o .:  "mute"
-
-instance ToJSON GuildMember where
-  toJSON GuildMember {..} = object [(name, value) | (name, Just value) <-
-      [ ("user",      toJSON <$>      memberUser)
-      , ("nick",      toJSON <$>      memberNick)
-      , ("roles",     toJSON <$> pure memberRoles)
-      , ("joined_at", toJSON <$> pure memberJoinedAt)
-      , ("deaf",      toJSON <$> pure memberDeaf)
-      , ("mute",      toJSON <$> pure memberMute)
-      ] ]
+import Discord.Internal.Types.Channel (Channel)
+import Discord.Internal.Types.User (User, GuildMember)
+import Discord.Internal.Types.Components (Emoji)
 
 
--- https://discord.com/developers/docs/resources/guild#guild-object
 
 -- | Guilds in Discord represent a collection of users and channels into an isolated
 --   "Server"
+--
+-- https://discord.com/developers/docs/resources/guild#guild-object
 data Guild = Guild
       { guildId                  :: GuildId       -- ^ Gulid id
       , guildName                :: T.Text          -- ^ Guild name (2 - 100 chars)
       , guildIcon                :: Maybe T.Text    -- ^ Icon hash
       , guildSplash              :: Maybe T.Text    -- ^ Splash hash
       , guildOwnerId             :: UserId       -- ^ Guild owner id
-      , guildPermissions         :: Maybe Integer
+      , guildPermissions         :: Maybe T.Text
       , guildRegion              :: Maybe T.Text    -- ^ Guild voice region
       , guildAfkId               :: Maybe ChannelId -- ^ Id of afk channel
       , guildAfkTimeout          :: Integer         -- ^ Afk timeout in seconds
-      , guildEmbedEnabled        :: Maybe Bool      -- ^ Id of embedded channel
-      , guildEmbedChannel        :: Maybe ChannelId -- ^ Id of embedded channel
+      , guildWidgetEnabled       :: Maybe Bool      -- ^ Id of embedded channel
+      , guildWidgetChannelId     :: Maybe ChannelId -- ^ Id of embedded channel
       , guildVerificationLevel   :: Integer         -- ^ Level of verification
       , guildNotification        :: Integer         -- ^ Level of default notifications
       , guildExplicitFilterLevel :: Integer
@@ -80,8 +53,8 @@ instance FromJSON Guild where
           <*> o .:? "region"
           <*> o .:? "afk_channel_id"
           <*> o .:  "afk_timeout"
-          <*> o .:? "embed_enabled"
-          <*> o .:? "embed_channel_id"
+          <*> o .:? "widget_enabled"
+          <*> o .:? "widget_channel_id"
           <*> o .:  "verification_level"
           <*> o .:  "default_message_notifications"
           <*> o .:  "explicit_content_filter"
@@ -123,7 +96,7 @@ data PartialGuild = PartialGuild
       , partialGuildName        :: T.Text
       , partialGuildIcon        :: Maybe T.Text
       , partialGuildOwner       :: Bool
-      , partialGuildPermissions :: Integer
+      , partialGuildPermissions :: T.Text
       } deriving (Show, Read, Eq, Ord)
 
 instance FromJSON PartialGuild where
@@ -146,7 +119,7 @@ data Role =
       , roleColor   :: ColorInteger              -- ^ Integer representation of color code
       , roleHoist   :: Bool                      -- ^ If the role is pinned in the user listing
       , rolePos     :: Integer                   -- ^ Position of this role
-      , rolePerms   :: Integer                   -- ^ Permission bit set
+      , rolePerms   :: T.Text                   -- ^ Permission bit set
       , roleManaged :: Bool                      -- ^ Whether this role is managed by an integration
       , roleMention :: Bool                      -- ^ Whether this role is mentionable
     } deriving (Show, Read, Eq, Ord)
@@ -272,17 +245,17 @@ instance FromJSON IntegrationAccount where
     IntegrationAccount <$> o .: "id" <*> o .: "name"
 
 -- | Represents an image to be used in third party sites to link to a discord channel
-data GuildEmbed = GuildEmbed
-      { embedEnabled :: Bool      -- ^ Whether the embed is enabled
-      , embedChannel :: ChannelId -- ^ The embed channel id
+data GuildWidget = GuildWidget
+      { widgetEnabled :: Bool      -- ^ Whether the widget is enabled
+      , widgetChannelId :: ChannelId -- ^ The widget channel id
       } deriving (Show, Read, Eq, Ord)
 
-instance FromJSON GuildEmbed where
-  parseJSON = withObject "GuildEmbed" $ \o ->
-    GuildEmbed <$> o .: "enabled" <*> o .: "snowflake"
+instance FromJSON GuildWidget where
+  parseJSON = withObject "GuildWidget" $ \o ->
+    GuildWidget <$> o .: "enabled" <*> o .: "channel_id"
 
-instance ToJSON GuildEmbed where
-  toJSON (GuildEmbed enabled snowflake) = object
+instance ToJSON GuildWidget where
+  toJSON (GuildWidget enabled snowflake) = object
     [ "enabled"   .= enabled
-    , "snowflake" .= snowflake
+    , "channel_id" .= snowflake
     ]

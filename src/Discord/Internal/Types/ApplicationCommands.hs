@@ -1,36 +1,230 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Discord.Internal.Types.ApplicationCommands
   ( ApplicationCommand (..),
-    ApplicationCommandId,
+    ApplicationCommandOptionSubcommandOrGroup (..),
+    ApplicationCommandOptionSubcommand (..),
+    ApplicationCommandOptionValue (..),
+    InternalApplicationCommand (..),
     CreateApplicationCommand (..),
+    createApplicationCommandChatInput,
+    createApplicationCommandUser,
+    createApplicationCommandMessage,
     EditApplicationCommand (..),
     ApplicationCommandType (..),
-    ApplicationCommandOption (..),
+    InternalApplicationCommandOption (..),
     ApplicationCommandOptionType (..),
-    ApplicationCommandOptionChoice (..),
+    InternalApplicationCommandOptionChoice,
+    Choice (..),
     ApplicationCommandChannelType (..),
+    GuildApplicationCommandPermissions (..),
+    ApplicationCommandPermissions (..),
+    ApplicationCommandPermissionType (..),
     StringNumberValue (..),
   )
 where
 
+import Control.Applicative
 import Data.Aeson
-import Data.Data (Data (dataTypeOf), dataTypeConstrs, fromConstr)
+import Data.Char (isLower)
+import Data.Data (Data)
 import Data.Default (Default (..))
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, fromMaybe)
 import Data.Scientific (Scientific)
 import qualified Data.Text as T
-import Discord.Internal.Types.Prelude (ApplicationCommandId, ApplicationId, GuildId, Snowflake)
+import Discord.Internal.Types.Prelude (ApplicationCommandId, ApplicationId, GuildId, Internals (..), Snowflake, makeTable, toMaybeJSON)
 
-toMaybeJSON :: (ToJSON a) => a -> Maybe Value
-toMaybeJSON = return . toJSON
+data ApplicationCommand
+  = ApplicationCommandUser
+      { applicationCommandId :: ApplicationCommandId,
+        applicationCommandApplicationId :: ApplicationId,
+        applicationCommandGuildId :: Maybe GuildId,
+        applicationCommandName :: T.Text,
+        applicationCommandDefaultPermission :: Maybe Bool,
+        applicationCommandVersion :: Snowflake
+      }
+  | ApplicationCommandMessage
+      { applicationCommandId :: ApplicationCommandId,
+        applicationCommandApplicationId :: ApplicationId,
+        applicationCommandGuildId :: Maybe GuildId,
+        applicationCommandName :: T.Text,
+        applicationCommandDefaultPermission :: Maybe Bool,
+        applicationCommandVersion :: Snowflake
+      }
+  | ApplicationCommandChatInput
+      { applicationCommandId :: ApplicationCommandId,
+        applicationCommandApplicationId :: ApplicationId,
+        applicationCommandGuildId :: Maybe GuildId,
+        applicationCommandName :: T.Text,
+        applicationCommandDescription :: T.Text,
+        applicationCommandOptions :: Maybe ApplicationCommandOptions,
+        applicationCommandDefaultPermission :: Maybe Bool,
+        applicationCommandVersion :: Snowflake
+      }
+  | ApplicationCommandUnknown InternalApplicationCommand
+  deriving (Show, Eq, Read)
 
-makeTable :: (Data t, Enum t) => t -> [(Int, t)]
-makeTable t = map (\cData -> let c = fromConstr cData in (fromEnum c, c)) (dataTypeConstrs $ dataTypeOf t)
+data ApplicationCommandOptions
+  = ApplicationCommandOptionsSubcommands [ApplicationCommandOptionSubcommandOrGroup]
+  | ApplicationCommandOptionsValues [ApplicationCommandOptionValue]
+  deriving (Show, Eq, Read)
+
+data ApplicationCommandOptionSubcommandOrGroup
+  = ApplicationCommandOptionSubcommandGroup
+      { applicationCommandOptionSubcommandGroupName :: T.Text,
+        applicationCommandOptionSubcommandGroupDescription :: T.Text,
+        applicationCommandOptionSubcommandGroupOptions :: [ApplicationCommandOptionSubcommand]
+      }
+  | ApplicationCommandOptionSubcommandOrGroupSubcommand ApplicationCommandOptionSubcommand
+  deriving (Show, Eq, Read)
+
+data ApplicationCommandOptionSubcommand = ApplicationCommandOptionSubcommand
+  { applicationCommandOptionSubcommandName :: T.Text,
+    applicationCommandOptionSubcommandDescription :: T.Text,
+    applicationCommandOptionSubcommandOptions :: [ApplicationCommandOptionValue]
+  }
+  deriving (Show, Eq, Read)
+
+data ApplicationCommandOptionValue
+  = ApplicationCommandOptionValueString
+      { applicationCommandOptionValueName :: T.Text,
+        applicationCommandOptionValueDescription :: T.Text,
+        applicationCommandOptionValueRequired :: Maybe Bool,
+        applicationCommandOptionValueStringChoices :: Maybe [Choice T.Text],
+        applicationCommandOptionValueAutocomplete :: Maybe Bool
+      }
+  | ApplicationCommandOptionValueInteger
+      { applicationCommandOptionValueName :: T.Text,
+        applicationCommandOptionValueDescription :: T.Text,
+        applicationCommandOptionValueRequired :: Maybe Bool,
+        applicationCommandOptionValueIntegerChoices :: Maybe [Choice Integer],
+        applicationCommandOptionValueIntegerMinVal :: Maybe Integer,
+        applicationCommandOptionValueIntegerMaxVal :: Maybe Integer,
+        applicationCommandOptionValueAutocomplete :: Maybe Bool
+      }
+  | ApplicationCommandOptionValueBoolean
+      { applicationCommandOptionValueName :: T.Text,
+        applicationCommandOptionValueDescription :: T.Text,
+        applicationCommandOptionValueRequired :: Maybe Bool
+      }
+  | ApplicationCommandOptionValueUser
+      { applicationCommandOptionValueName :: T.Text,
+        applicationCommandOptionValueDescription :: T.Text,
+        applicationCommandOptionValueRequired :: Maybe Bool
+      }
+  | ApplicationCommandOptionValueChannel
+      { applicationCommandOptionValueName :: T.Text,
+        applicationCommandOptionValueDescription :: T.Text,
+        applicationCommandOptionValueRequired :: Maybe Bool,
+        applicationCommandOptionValueChannelTypes :: Maybe [ApplicationCommandChannelType]
+      }
+  | ApplicationCommandOptionValueRole
+      { applicationCommandOptionValueName :: T.Text,
+        applicationCommandOptionValueDescription :: T.Text,
+        applicationCommandOptionValueRequired :: Maybe Bool
+      }
+  | ApplicationCommandOptionValueMentionable
+      { applicationCommandOptionValueName :: T.Text,
+        applicationCommandOptionValueDescription :: T.Text,
+        applicationCommandOptionValueRequired :: Maybe Bool
+      }
+  | ApplicationCommandOptionValueNumber
+      { applicationCommandOptionValueName :: T.Text,
+        applicationCommandOptionValueDescription :: T.Text,
+        applicationCommandOptionValueRequired :: Maybe Bool,
+        applicationCommandOptionValueNumberChoices :: Maybe [Choice Scientific],
+        applicationCommandOptionValueNumberMinVal :: Maybe Scientific,
+        applicationCommandOptionValueNumberMaxVal :: Maybe Scientific,
+        applicationCommandOptionValueAutocomplete :: Maybe Bool
+      }
+  deriving (Show, Eq, Read)
+
+instance Internals ApplicationCommandOptionValue InternalApplicationCommandOption where
+  toInternal ApplicationCommandOptionValueNumber {..} = InternalApplicationCommandOption ApplicationCommandOptionTypeNumber applicationCommandOptionValueName applicationCommandOptionValueDescription applicationCommandOptionValueRequired (((StringNumberValueNumber <$>) <$>) <$> applicationCommandOptionValueNumberChoices) Nothing Nothing applicationCommandOptionValueNumberMinVal applicationCommandOptionValueNumberMaxVal applicationCommandOptionValueAutocomplete
+  toInternal ApplicationCommandOptionValueInteger {..} = InternalApplicationCommandOption ApplicationCommandOptionTypeInteger applicationCommandOptionValueName applicationCommandOptionValueDescription applicationCommandOptionValueRequired (((StringNumberValueInteger <$>) <$>) <$> applicationCommandOptionValueIntegerChoices) Nothing Nothing (fromInteger <$> applicationCommandOptionValueIntegerMinVal) (fromInteger <$> applicationCommandOptionValueIntegerMaxVal) applicationCommandOptionValueAutocomplete
+  toInternal ApplicationCommandOptionValueString {..} = InternalApplicationCommandOption ApplicationCommandOptionTypeInteger applicationCommandOptionValueName applicationCommandOptionValueDescription applicationCommandOptionValueRequired (((StringNumberValueString <$>) <$>) <$> applicationCommandOptionValueStringChoices) Nothing Nothing Nothing Nothing applicationCommandOptionValueAutocomplete
+  toInternal ApplicationCommandOptionValueChannel {..} = InternalApplicationCommandOption ApplicationCommandOptionTypeChannel applicationCommandOptionValueName applicationCommandOptionValueDescription applicationCommandOptionValueRequired Nothing Nothing applicationCommandOptionValueChannelTypes Nothing Nothing Nothing
+  toInternal ApplicationCommandOptionValueBoolean {..} = InternalApplicationCommandOption ApplicationCommandOptionTypeBoolean applicationCommandOptionValueName applicationCommandOptionValueDescription applicationCommandOptionValueRequired Nothing Nothing Nothing Nothing Nothing Nothing
+  toInternal ApplicationCommandOptionValueUser {..} = InternalApplicationCommandOption ApplicationCommandOptionTypeUser applicationCommandOptionValueName applicationCommandOptionValueDescription applicationCommandOptionValueRequired Nothing Nothing Nothing Nothing Nothing Nothing
+  toInternal ApplicationCommandOptionValueRole {..} = InternalApplicationCommandOption ApplicationCommandOptionTypeRole applicationCommandOptionValueName applicationCommandOptionValueDescription applicationCommandOptionValueRequired Nothing Nothing Nothing Nothing Nothing Nothing
+  toInternal ApplicationCommandOptionValueMentionable {..} = InternalApplicationCommandOption ApplicationCommandOptionTypeMentionable applicationCommandOptionValueName applicationCommandOptionValueDescription applicationCommandOptionValueRequired Nothing Nothing Nothing Nothing Nothing Nothing
+
+  fromInternal InternalApplicationCommandOption {internalApplicationCommandOptionType = ApplicationCommandOptionTypeNumber, ..} = do
+    cs <- maybe (Just []) (mapM extractChoices) internalApplicationCommandOptionChoices
+    return $ ApplicationCommandOptionValueNumber internalApplicationCommandOptionName internalApplicationCommandOptionDescription internalApplicationCommandOptionRequired (fromResult cs) internalApplicationCommandOptionMinVal internalApplicationCommandOptionMaxVal internalApplicationCommandOptionAutocomplete
+    where
+      extractChoices (Choice s (StringNumberValueNumber n)) = Just (Choice s n)
+      extractChoices _ = Nothing
+      fromResult [] = Nothing
+      fromResult is = Just is
+  fromInternal InternalApplicationCommandOption {internalApplicationCommandOptionType = ApplicationCommandOptionTypeInteger, ..} = do
+    cs <- maybe (Just []) (mapM extractChoices) internalApplicationCommandOptionChoices
+    return $ ApplicationCommandOptionValueInteger internalApplicationCommandOptionName internalApplicationCommandOptionDescription internalApplicationCommandOptionRequired (fromResult cs) (round <$> internalApplicationCommandOptionMinVal) (round <$> internalApplicationCommandOptionMaxVal) internalApplicationCommandOptionAutocomplete
+    where
+      extractChoices (Choice s (StringNumberValueInteger n)) = Just (Choice s n)
+      extractChoices _ = Nothing
+      fromResult [] = Nothing
+      fromResult is = Just is
+  -- note with the above: the bounds are rounded for simplicity but ideally they wouldn't be
+  fromInternal InternalApplicationCommandOption {internalApplicationCommandOptionType = ApplicationCommandOptionTypeString, ..} = do
+    cs <- maybe (Just []) (mapM extractChoices) internalApplicationCommandOptionChoices
+    return $ ApplicationCommandOptionValueString internalApplicationCommandOptionName internalApplicationCommandOptionDescription internalApplicationCommandOptionRequired (fromResult cs) internalApplicationCommandOptionAutocomplete
+    where
+      extractChoices (Choice s (StringNumberValueString n)) = Just (Choice s n)
+      extractChoices _ = Nothing
+      fromResult [] = Nothing
+      fromResult is = Just is
+  fromInternal InternalApplicationCommandOption {internalApplicationCommandOptionType = ApplicationCommandOptionTypeBoolean, ..} = Just $ ApplicationCommandOptionValueBoolean internalApplicationCommandOptionName internalApplicationCommandOptionDescription internalApplicationCommandOptionRequired
+  fromInternal InternalApplicationCommandOption {internalApplicationCommandOptionType = ApplicationCommandOptionTypeUser, ..} = Just $ ApplicationCommandOptionValueUser internalApplicationCommandOptionName internalApplicationCommandOptionDescription internalApplicationCommandOptionRequired
+  fromInternal InternalApplicationCommandOption {internalApplicationCommandOptionType = ApplicationCommandOptionTypeRole, ..} = Just $ ApplicationCommandOptionValueRole internalApplicationCommandOptionName internalApplicationCommandOptionDescription internalApplicationCommandOptionRequired
+  fromInternal InternalApplicationCommandOption {internalApplicationCommandOptionType = ApplicationCommandOptionTypeMentionable, ..} = Just $ ApplicationCommandOptionValueMentionable internalApplicationCommandOptionName internalApplicationCommandOptionDescription internalApplicationCommandOptionRequired
+  fromInternal InternalApplicationCommandOption {internalApplicationCommandOptionType = ApplicationCommandOptionTypeChannel, ..} = Just $ ApplicationCommandOptionValueChannel internalApplicationCommandOptionName internalApplicationCommandOptionDescription internalApplicationCommandOptionRequired internalApplicationCommandOptionChannelTypes
+  fromInternal _ = Nothing
+
+instance Internals ApplicationCommandOptionSubcommand InternalApplicationCommandOption where
+  toInternal ApplicationCommandOptionSubcommand {..} = InternalApplicationCommandOption ApplicationCommandOptionTypeSubcommand applicationCommandOptionSubcommandName applicationCommandOptionSubcommandDescription Nothing Nothing (Just $ toInternal <$> applicationCommandOptionSubcommandOptions) Nothing Nothing Nothing Nothing
+
+  fromInternal InternalApplicationCommandOption {internalApplicationCommandOptionType = ApplicationCommandOptionTypeSubcommand, ..} = do
+    os <- maybe (Just []) (mapM fromInternal) internalApplicationCommandOptionOptions
+    return $ ApplicationCommandOptionSubcommand internalApplicationCommandOptionName internalApplicationCommandOptionDescription os
+  fromInternal _ = Nothing
+
+instance Internals ApplicationCommandOptionSubcommandOrGroup InternalApplicationCommandOption where
+  toInternal (ApplicationCommandOptionSubcommandOrGroupSubcommand s) = toInternal s
+  toInternal ApplicationCommandOptionSubcommandGroup {..} = InternalApplicationCommandOption ApplicationCommandOptionTypeSubcommandGroup applicationCommandOptionSubcommandGroupName applicationCommandOptionSubcommandGroupDescription Nothing Nothing (Just $ toInternal <$> applicationCommandOptionSubcommandGroupOptions) Nothing Nothing Nothing Nothing
+
+  fromInternal io@InternalApplicationCommandOption {internalApplicationCommandOptionType = ApplicationCommandOptionTypeSubcommand, ..} = ApplicationCommandOptionSubcommandOrGroupSubcommand <$> fromInternal io
+  fromInternal InternalApplicationCommandOption {internalApplicationCommandOptionType = ApplicationCommandOptionTypeSubcommandGroup, ..} = do
+    os <- maybe (Just []) (mapM fromInternal) internalApplicationCommandOptionOptions
+    return $ ApplicationCommandOptionSubcommandGroup internalApplicationCommandOptionName internalApplicationCommandOptionDescription os
+  fromInternal _ = Nothing
+
+instance Internals ApplicationCommandOptions [InternalApplicationCommandOption] where
+  toInternal (ApplicationCommandOptionsSubcommands is) = toInternal <$> is
+  toInternal (ApplicationCommandOptionsValues is) = toInternal <$> is
+
+  fromInternal is = (ApplicationCommandOptionsSubcommands <$> mapM fromInternal is) <|> (ApplicationCommandOptionsValues <$> mapM fromInternal is)
+
+instance Internals ApplicationCommand InternalApplicationCommand where
+  toInternal ApplicationCommandUser {..} = InternalApplicationCommand applicationCommandId (Just ApplicationCommandTypeUser) applicationCommandApplicationId applicationCommandGuildId applicationCommandName "" Nothing applicationCommandDefaultPermission applicationCommandVersion
+  toInternal ApplicationCommandMessage {..} = InternalApplicationCommand applicationCommandId (Just ApplicationCommandTypeMessage) applicationCommandApplicationId applicationCommandGuildId applicationCommandName "" Nothing applicationCommandDefaultPermission applicationCommandVersion
+  toInternal ApplicationCommandChatInput {..} = InternalApplicationCommand applicationCommandId (Just ApplicationCommandTypeChatInput) applicationCommandApplicationId applicationCommandGuildId applicationCommandName applicationCommandDescription (toInternal <$> applicationCommandOptions) applicationCommandDefaultPermission applicationCommandVersion
+  toInternal (ApplicationCommandUnknown ai) = ai
+
+  fromInternal InternalApplicationCommand {internalApplicationCommandType = Just ApplicationCommandTypeUser, ..} = Just $ ApplicationCommandUser internalApplicationCommandId internalApplicationCommandApplicationId internalApplicationCommandGuildId internalApplicationCommandName internalApplicationCommandDefaultPermission internalApplicationCommandVersion
+  fromInternal InternalApplicationCommand {internalApplicationCommandType = Just ApplicationCommandTypeMessage, ..} = Just $ ApplicationCommandMessage internalApplicationCommandId internalApplicationCommandApplicationId internalApplicationCommandGuildId internalApplicationCommandName internalApplicationCommandDefaultPermission internalApplicationCommandVersion
+  fromInternal a@InternalApplicationCommand {internalApplicationCommandType = Just ApplicationCommandTypeChatInput, ..} = Just $ fromMaybe (ApplicationCommandUnknown a) $ ((internalApplicationCommandOptions <|> Just []) >>= fromInternal) >>= \iOptions -> Just $ ApplicationCommandChatInput internalApplicationCommandId internalApplicationCommandApplicationId internalApplicationCommandGuildId internalApplicationCommandName internalApplicationCommandDescription (Just iOptions) internalApplicationCommandDefaultPermission internalApplicationCommandVersion
+  fromInternal a = fromInternal (a {internalApplicationCommandType = Just ApplicationCommandTypeChatInput})
+
+-- Just $ ApplicationCommandMessage internalApplicationCommandId internalApplicationCommandApplicationId internalApplicationCommandGuildId internalApplicationCommandName internalApplicationCommandDefaultPermission internalApplicationCommandVersion
 
 -- | What type of application command. Represents slash commands, right clicking
 -- a user, and right clicking a message respectively.
@@ -80,8 +274,8 @@ data CreateApplicationCommand = CreateApplicationCommand
     -- non-slash commands.
     createApplicationCommandDescription :: T.Text,
     -- | What options the application (max length 25). Has to be `Nothing` for
-    -- non-slash  commands.
-    createApplicationCommandOptions :: Maybe [ApplicationCommandOption],
+    -- non-slash commands.
+    createApplicationCommandOptions :: Maybe [InternalApplicationCommandOption],
     -- | Whether the command is enabled by default when the application is added
     -- to a guild. Defaults to true if not present
     createApplicationCommandDefaultPermission :: Maybe Bool,
@@ -90,9 +284,6 @@ data CreateApplicationCommand = CreateApplicationCommand
     createApplicationCommandType :: Maybe ApplicationCommandType
   }
   deriving (Show, Eq, Read)
-
-instance Default CreateApplicationCommand where
-  def = CreateApplicationCommand "createappcom" "createappcom desc" Nothing Nothing Nothing
 
 instance ToJSON CreateApplicationCommand where
   toJSON CreateApplicationCommand {..} =
@@ -107,6 +298,35 @@ instance ToJSON CreateApplicationCommand where
             ]
       ]
 
+-- | Create the basics for a chat input (slash command). Use record overwriting
+-- to enter the other values. The name needs to be all lower case letters, and
+-- between 1 and 32 characters. The description has to be non-empty and less
+-- than or equal to 100 characters.
+createApplicationCommandChatInput :: T.Text -> T.Text -> Maybe CreateApplicationCommand
+createApplicationCommandChatInput name desc
+  | T.all isLower name && not (T.null desc) && l >= 1 && l <= 32 && T.length desc <= 100 = Just $ CreateApplicationCommand name desc Nothing Nothing (Just ApplicationCommandTypeChatInput)
+  | otherwise = Nothing
+  where
+    l = T.length name
+
+-- | Create the basics for a user command. Use record overwriting to enter the
+-- other values. The name needs to be between 1 and 32 characters.
+createApplicationCommandUser :: T.Text -> Maybe CreateApplicationCommand
+createApplicationCommandUser name
+  | l >= 1 && l <= 32 = Just $ CreateApplicationCommand name "" Nothing Nothing (Just ApplicationCommandTypeUser)
+  | otherwise = Nothing
+  where
+    l = T.length name
+
+-- | Create the basics for a message command. Use record overwriting to enter
+-- the other values. The name needs to be between 1 and 32 characters.
+createApplicationCommandMessage :: T.Text -> Maybe CreateApplicationCommand
+createApplicationCommandMessage name
+  | l >= 1 && l <= 32 = Just $ CreateApplicationCommand name "" Nothing Nothing (Just ApplicationCommandTypeMessage)
+  | otherwise = Nothing
+  where
+    l = T.length name
+
 -- | Data type to be used when editing application commands. The specification
 -- is below. See `CreateApplicationCommand` for an explanation for the
 -- parameters.
@@ -115,7 +335,7 @@ instance ToJSON CreateApplicationCommand where
 data EditApplicationCommand = EditApplicationCommand
   { editApplicationCommandName :: Maybe T.Text,
     editApplicationCommandDescription :: Maybe T.Text,
-    editApplicationCommandOptions :: Maybe [ApplicationCommandOption],
+    editApplicationCommandOptions :: Maybe [InternalApplicationCommandOption],
     editApplicationCommandDefaultPermission :: Maybe Bool,
     editApplicationCommandType :: Maybe ApplicationCommandType
   }
@@ -141,34 +361,34 @@ instance ToJSON EditApplicationCommand where
 -- so if you are, reconsider what you're doing.
 --
 -- https://discord.com/developers/docs/interactions/application-commands#application-command-object-application-command-structure
-data ApplicationCommand = ApplicationCommand
+data InternalApplicationCommand = InternalApplicationCommand
   { -- | Unique id of the command.
-    applicationCommandId :: ApplicationCommandId,
+    internalApplicationCommandId :: ApplicationCommandId,
     -- | The type of the command.
-    applicationCommandType :: Maybe ApplicationCommandType,
+    internalApplicationCommandType :: Maybe ApplicationCommandType,
     -- | Unique id of the parent application (the bot).
-    applicationCommandApplicationId :: ApplicationId,
+    internalApplicationCommandApplicationId :: ApplicationId,
     -- | The guild id of the command if not global.
-    applicationCommandGuildId :: Maybe GuildId,
+    internalApplicationCommandGuildId :: Maybe GuildId,
     -- | Must be 1-32 characters.
-    applicationCommandName :: T.Text,
+    internalApplicationCommandName :: T.Text,
     -- | Must be empty for USER and MESSAGE commands, otherwise 1-100 chars.
-    applicationCommandDescription :: T.Text,
+    internalApplicationCommandDescription :: T.Text,
     -- | CHAT_INPUT only, parameters to command
-    applicationCommandOptions :: Maybe [ApplicationCommandOption],
+    internalApplicationCommandOptions :: Maybe [InternalApplicationCommandOption],
     -- | whether the command is enabled by default when the app is added to a
     -- guild. Defaults to true.
-    applicationCommandDefaultPermission :: Maybe Bool,
-    applicationCommandVersion :: Snowflake
+    internalApplicationCommandDefaultPermission :: Maybe Bool,
+    internalApplicationCommandVersion :: Snowflake
   }
-  deriving (Show)
+  deriving (Show, Eq, Read)
 
-instance FromJSON ApplicationCommand where
+instance FromJSON InternalApplicationCommand where
   parseJSON =
     withObject
-      "ApplicationCommand"
+      "InternalApplicationCommand"
       ( \v ->
-          ApplicationCommand
+          InternalApplicationCommand
             <$> v .: "id"
             <*> v .:? "type"
             <*> v .: "application_id"
@@ -183,60 +403,57 @@ instance FromJSON ApplicationCommand where
 -- | This is the structure that designates different options for slash commands.
 --
 -- https://discord.com/developers/docs/interactions/application-commands#application-command-object-application-command-option-structure
-data ApplicationCommandOption = ApplicationCommandOption
+data InternalApplicationCommandOption = InternalApplicationCommandOption
   { -- | What the type of this option is.
-    applicationCommandOptionType :: ApplicationCommandOptionType,
+    internalApplicationCommandOptionType :: ApplicationCommandOptionType,
     -- | The name of the option . 1-32 characters
-    applicationCommandOptionName :: T.Text,
+    internalApplicationCommandOptionName :: T.Text,
     -- | 1-100 characters
-    applicationCommandOptionDescription :: T.Text,
+    internalApplicationCommandOptionDescription :: T.Text,
     -- | Is the parameter required? default false
-    applicationCommandOptionRequired :: Maybe Bool,
+    internalApplicationCommandOptionRequired :: Maybe Bool,
     -- | If specified, these are the only valid options to choose from. Type
     -- depends on optionType, and can only be specified for STRING, INTEGER or
     -- NUMBER types.
-    applicationCommandOptionChoices :: Maybe [ApplicationCommandOptionChoice],
+    internalApplicationCommandOptionChoices :: Maybe [InternalApplicationCommandOptionChoice],
     -- | If the option type is a subcommand or subcommand group type, these are
     -- the parameters to the subcommand.
-    applicationCommandOptionOptions :: Maybe [ApplicationCommandOption],
+    internalApplicationCommandOptionOptions :: Maybe [InternalApplicationCommandOption],
     -- | If option is channel type, these are the only channel types allowed.
-    applicationCommandOptionChannelTypes :: Maybe [ApplicationCommandChannelType],
+    internalApplicationCommandOptionChannelTypes :: Maybe [ApplicationCommandChannelType],
     -- | If option is number type, minimum value for the number
-    applicationCommandOptionMinVal :: Maybe Scientific,
+    internalApplicationCommandOptionMinVal :: Maybe Scientific,
     -- | if option is number type, maximum value for the number
-    applicationCommandOptionMaxVal :: Maybe Scientific,
+    internalApplicationCommandOptionMaxVal :: Maybe Scientific,
     -- | Enable auto complete interactions. may not be set to true if choices is present.
-    applicationCommandOptionAutocomplete :: Maybe Bool
+    internalApplicationCommandOptionAutocomplete :: Maybe Bool
   }
   deriving (Show, Eq, Read)
 
-instance Default ApplicationCommandOption where
-  def = ApplicationCommandOption ApplicationCommandOptionTypeString "appcomop" "appcomop desc" Nothing Nothing Nothing Nothing Nothing Nothing Nothing
-
-instance ToJSON ApplicationCommandOption where
-  toJSON ApplicationCommandOption {..} =
+instance ToJSON InternalApplicationCommandOption where
+  toJSON InternalApplicationCommandOption {..} =
     object
       [ (name, value)
         | (name, Just value) <-
-            [ ("type", toMaybeJSON applicationCommandOptionType),
-              ("name", toMaybeJSON applicationCommandOptionName),
-              ("description", toMaybeJSON applicationCommandOptionDescription),
-              ("required", toJSON <$> applicationCommandOptionRequired),
-              ("choices", toJSON <$> applicationCommandOptionChoices),
-              ("options", toJSON <$> applicationCommandOptionOptions),
-              ("channel_types", toJSON <$> applicationCommandOptionChannelTypes),
-              ("min_val", toJSON <$> applicationCommandOptionMinVal),
-              ("max_val", toJSON <$> applicationCommandOptionMaxVal),
-              ("autocomplete", toJSON <$> applicationCommandOptionAutocomplete)
+            [ ("type", toMaybeJSON internalApplicationCommandOptionType),
+              ("name", toMaybeJSON internalApplicationCommandOptionName),
+              ("description", toMaybeJSON internalApplicationCommandOptionDescription),
+              ("required", toJSON <$> internalApplicationCommandOptionRequired),
+              ("choices", toJSON <$> internalApplicationCommandOptionChoices),
+              ("options", toJSON <$> internalApplicationCommandOptionOptions),
+              ("channel_types", toJSON <$> internalApplicationCommandOptionChannelTypes),
+              ("min_val", toJSON <$> internalApplicationCommandOptionMinVal),
+              ("max_val", toJSON <$> internalApplicationCommandOptionMaxVal),
+              ("autocomplete", toJSON <$> internalApplicationCommandOptionAutocomplete)
             ]
       ]
 
-instance FromJSON ApplicationCommandOption where
+instance FromJSON InternalApplicationCommandOption where
   parseJSON =
     withObject
-      "ApplicationCommandOption"
+      "InternalApplicationCommandOption"
       ( \v ->
-          ApplicationCommandOption
+          InternalApplicationCommandOption
             <$> v .: "type"
             <*> v .: "name"
             <*> v .: "description"
@@ -256,10 +473,10 @@ instance FromJSON ApplicationCommandOption where
 data ApplicationCommandOptionType
   = -- | A subcommand. It can take further options, excluding sub commands and
     -- sub command groups.
-    ApplicationCommandOptionTypeSubCommand
+    ApplicationCommandOptionTypeSubcommand
   | -- | A subcommand group. It can take further options, excluding sub command
     -- groups.
-    ApplicationCommandOptionTypeSubCommandGroup
+    ApplicationCommandOptionTypeSubcommandGroup
   | -- | Can typically be provided with default values.
     ApplicationCommandOptionTypeString
   | -- | Can typically be provided with default values, and possibly with
@@ -278,8 +495,8 @@ data ApplicationCommandOptionType
   deriving (Show, Read, Data, Eq)
 
 instance Enum ApplicationCommandOptionType where
-  fromEnum ApplicationCommandOptionTypeSubCommand = 1
-  fromEnum ApplicationCommandOptionTypeSubCommandGroup = 2
+  fromEnum ApplicationCommandOptionTypeSubcommand = 1
+  fromEnum ApplicationCommandOptionTypeSubcommandGroup = 2
   fromEnum ApplicationCommandOptionTypeString = 3
   fromEnum ApplicationCommandOptionTypeInteger = 4
   fromEnum ApplicationCommandOptionTypeBoolean = 5
@@ -290,7 +507,7 @@ instance Enum ApplicationCommandOptionType where
   fromEnum ApplicationCommandOptionTypeNumber = 10
   toEnum a = fromJust $ lookup a table
     where
-      table = makeTable ApplicationCommandOptionTypeSubCommand
+      table = makeTable ApplicationCommandOptionTypeSubcommand
 
 instance ToJSON ApplicationCommandOptionType where
   toJSON = toJSON . fromEnum
@@ -299,33 +516,41 @@ instance FromJSON ApplicationCommandOptionType where
   parseJSON = withScientific "ApplicationCommandOptionType" (return . toEnum . round)
 
 -- | Utility data type to store strings or number types.
-data StringNumberValue = StringNumberValueString T.Text | StringNumberValueNumber Scientific
+data StringNumberValue = StringNumberValueString T.Text | StringNumberValueNumber Scientific | StringNumberValueInteger Integer
   deriving (Show, Read, Eq)
 
 instance ToJSON StringNumberValue where
   toJSON (StringNumberValueString s) = toJSON s
   toJSON (StringNumberValueNumber i) = toJSON i
+  toJSON (StringNumberValueInteger i) = toJSON i
 
 instance FromJSON StringNumberValue where
   parseJSON (String t) = return $ StringNumberValueString t
-  parseJSON v = StringNumberValueNumber <$> parseJSON v
+  parseJSON v = (StringNumberValueInteger <$> parseJSON v) <|> (StringNumberValueNumber <$> parseJSON v)
 
--- | The choices for a particular option.
-data ApplicationCommandOptionChoice = ApplicationCommandOptionChoice
-  { applicationCommandOptionChoiceName :: String,
-    applicationCommandOptionChoiceValue :: StringNumberValue
-  }
+data Choice a = Choice {choiceName :: T.Text, choiceValue :: a}
   deriving (Show, Read, Eq)
 
-instance ToJSON ApplicationCommandOptionChoice where
-  toJSON ApplicationCommandOptionChoice {..} = object [("name", toJSON applicationCommandOptionChoiceName), ("value", toJSON applicationCommandOptionChoiceValue)]
+instance Functor Choice where
+  fmap f (Choice s a) = Choice s (f a)
 
-instance FromJSON ApplicationCommandOptionChoice where
+type InternalApplicationCommandOptionChoice = Choice StringNumberValue
+
+-- | The choices for a particular option.
+-- data InternalApplicationCommandOptionChoice = InternalApplicationCommandOptionChoice
+--   { internalApplicationCommandOptionChoiceName :: T.Text,
+--     internalApplicationCommandOptionChoiceValue :: StringNumberValue
+--   }
+--   deriving (Show, Read, Eq)
+instance (ToJSON a) => ToJSON (Choice a) where
+  toJSON Choice {..} = object [("name", toJSON choiceName), ("value", toJSON choiceValue)]
+
+instance (FromJSON a) => FromJSON (Choice a) where
   parseJSON =
     withObject
-      "ApplicationCommandOptionChoice"
+      "Choice"
       ( \v ->
-          ApplicationCommandOptionChoice
+          Choice
             <$> v .: "name"
             <*> v .: "value"
       )
@@ -380,3 +605,89 @@ instance ToJSON ApplicationCommandChannelType where
 
 instance FromJSON ApplicationCommandChannelType where
   parseJSON = withScientific "ApplicationCommandChannelType" (return . toEnum . round)
+
+data GuildApplicationCommandPermissions = GuildApplicationCommandPermissions
+  { -- | The id of the command
+    guildApplicationCommandPermissionsId :: ApplicationCommandId,
+    -- | The id of the application
+    guildApplicationCommandPermissionsApplicationId :: ApplicationId,
+    -- | The id of the guild
+    guildApplicationCommandPermissionsGuildId :: GuildId,
+    -- | The permissions for the command in the guild
+    guildApplicationCommandPermissionsPermissions :: [ApplicationCommandPermissions]
+  }
+  deriving (Show, Eq, Ord, Read)
+
+instance FromJSON GuildApplicationCommandPermissions where
+  parseJSON =
+    withObject
+      "GuildApplicationCommandPermissions"
+      ( \v ->
+          GuildApplicationCommandPermissions
+            <$> v .: "id"
+            <*> v .: "application_id"
+            <*> v .: "guild_id"
+            <*> v .: "permissions"
+      )
+
+instance ToJSON GuildApplicationCommandPermissions where
+  toJSON GuildApplicationCommandPermissions {..} =
+    object
+      [ (name, value)
+        | (name, Just value) <-
+            [ ("id", toMaybeJSON guildApplicationCommandPermissionsId),
+              ("application_id", toMaybeJSON guildApplicationCommandPermissionsApplicationId),
+              ("guild_id", toMaybeJSON guildApplicationCommandPermissionsGuildId),
+              ("permissions", toMaybeJSON guildApplicationCommandPermissionsPermissions)
+            ]
+      ]
+
+data ApplicationCommandPermissions = ApplicationCommandPermissions
+  { -- | The id of the role or user
+    applicationCommandPermissionsId :: Snowflake,
+    -- | Choose either role or user
+    applicationCommandPermissionsType :: ApplicationCommandPermissionType,
+    -- | Whether to allow or not
+    applicationCommandPermissionsPermission :: Bool
+  }
+  deriving (Show, Eq, Ord, Read)
+
+instance FromJSON ApplicationCommandPermissions where
+  parseJSON =
+    withObject
+      "ApplicationCommandPermissions"
+      ( \v ->
+          ApplicationCommandPermissions
+            <$> v .: "id"
+            <*> v .: "type"
+            <*> v .: "permission"
+      )
+
+instance ToJSON ApplicationCommandPermissions where
+  toJSON ApplicationCommandPermissions {..} =
+    object
+      [ (name, value)
+        | (name, Just value) <-
+            [ ("id", toMaybeJSON applicationCommandPermissionsId),
+              ("type", toMaybeJSON applicationCommandPermissionsType),
+              ("permission", toMaybeJSON applicationCommandPermissionsPermission)
+            ]
+      ]
+
+data ApplicationCommandPermissionType
+  = ApplicationCommandPermissionTypeRole
+  | ApplicationCommandPermissionTypeUser
+  deriving (Show, Eq, Ord, Read, Data)
+
+instance Enum ApplicationCommandPermissionType where
+  fromEnum ApplicationCommandPermissionTypeRole = 1
+  fromEnum ApplicationCommandPermissionTypeUser = 2
+  toEnum a = fromJust $ lookup a table
+    where
+      table = makeTable ApplicationCommandPermissionTypeRole
+
+instance ToJSON ApplicationCommandPermissionType where
+  toJSON = toJSON . fromEnum
+
+instance FromJSON ApplicationCommandPermissionType where
+  parseJSON = withScientific "ApplicationCommandPermissionType" (return . toEnum . round)

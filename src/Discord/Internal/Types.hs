@@ -10,6 +10,7 @@ module Discord.Internal.Types
   , module Discord.Internal.Types.Embed
   , module Discord.Internal.Types.ApplicationCommands
   , module Discord.Internal.Types.Interactions
+  , module  Discord.Internal.Types.Components
   , module Data.Aeson
   , module Data.Time.Clock
   , userFacingEvent
@@ -24,9 +25,11 @@ import Discord.Internal.Types.Embed
 import Discord.Internal.Types.Prelude
 import Discord.Internal.Types.ApplicationCommands
 import Discord.Internal.Types.Interactions
+import Discord.Internal.Types.Components
 
 import Data.Aeson (Object)
 import Data.Time.Clock (UTCTime(..))
+import Data.Maybe (fromMaybe)
 
 
 userFacingEvent :: EventInternalParse -> Event
@@ -62,5 +65,5 @@ userFacingEvent event = case event of
   InternalPresenceUpdate a -> PresenceUpdate a
   InternalTypingStart a -> TypingStart a
   InternalUserUpdate a -> UserUpdate a
-  InternalInteractionCreate a -> InteractionCreate a
+  InternalInteractionCreate a -> InteractionCreate (fromMaybe (InteractionUnknown a) (fromInternal a))
   InternalUnknownEvent a b -> UnknownEvent a b
